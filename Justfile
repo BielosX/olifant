@@ -1,4 +1,4 @@
-image := "postgresql:18"
+image := "olifant/postgresql:18"
 
 [working-directory: "postgresql"]
 build-img:
