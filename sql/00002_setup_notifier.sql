@@ -1,17 +1,15 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE PROCEDURE tick()
-LANGUAGE plpgsql
-AS $$
+CREATE FUNCTION tick() RETURNS void AS $$
     BEGIN
         RAISE NOTICE 'tick() called';
         NOTIFY game, 'Hello';
     END;
-$$;
+$$ LANGUAGE plpgsql;
 
 SELECT cron.schedule(
    'tick',
    '10 seconds',
-   'CALL tick()'
+   'SELECT tick()'
 );
 -- +goose StatementEnd
