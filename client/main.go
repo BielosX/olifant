@@ -24,7 +24,12 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	url := fmt.Sprintf("postgres://%s:%s@%s:%d/%s", cfg.Username, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
+	url := fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
+		cfg.Username,
+		cfg.Password,
+		cfg.Host,
+		cfg.Port,
+		cfg.Database)
 	pool, err := pgxpool.New(ctx, url)
 	if err != nil {
 		panic(err.Error())
