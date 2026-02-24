@@ -1,0 +1,4 @@
+{
+  "name": "postgres",
+  "image": "postgres:18-trixie",
+}
