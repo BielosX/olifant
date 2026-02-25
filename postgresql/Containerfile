@@ -1,10 +1,11 @@
 FROM postgres:18-trixie
-RUN apt-get update && apt-get -y install postgresql-18-cron build-essential
+RUN apt-get update && apt-get -y install postgresql-18-cron build-essential postgresql-server-dev-18
 
 COPY postgresql.conf /etc/postgresql/postgresql.conf
 COPY pg_hba.conf /etc/postgresql/pg_hba.conf
 COPY pg_game_loop /opt/pg_game_loop
 
-RUN make -f /opt/pg_game_loop/Makefile install
+WORKDIR /opt/pg_game_loop
+RUN make clean && make && make install
 
 CMD ["-c", "config_file=/etc/postgresql/postgresql.conf", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]

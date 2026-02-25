@@ -1,4 +1,11 @@
 {
   "name": "postgres",
-  "image": "postgres:18-trixie",
+  "build": {
+    "dockerfile": "Containerfile"
+  },
+  "customizations": {
+    "vscode": {
+        "extensions":["ms-vscode.cpptools"]
+    }
+  }
 }

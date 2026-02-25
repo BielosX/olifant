@@ -33,3 +33,6 @@ go.work.sum
 
 bin
 client/client
+.idea
+*.o
+*.bc
