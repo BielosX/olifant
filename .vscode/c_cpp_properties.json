@@ -7,10 +7,10 @@
                 "/usr/include/postgresql/18/server"
             ],
             "defines": [],
-            "compilerPath": "/usr/lib/clang",
+            "compilerPath": "/usr/bin/gcc",
             "cStandard": "c17",
             "cppStandard": "c++14",
-            "intelliSenseMode": "macos-clang-arm64"
+            "intelliSenseMode": "linux-gcc-arm64"
         }
     ],
     "version": 4

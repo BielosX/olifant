@@ -1,5 +1,6 @@
 {
   "name": "postgres",
+  "remoteUser": "developer",
   "build": {
     "dockerfile": "Containerfile"
   },

@@ -1,3 +1,8 @@
 FROM postgres:18-trixie
 
-RUN apt-get update && apt-get -y install postgresql-server-dev-18 build-essential
+RUN apt-get update && apt-get -y install postgresql-server-dev-18 build-essential zsh curl git
+RUN useradd -m -s /bin/zsh developer && \
+    usermod -aG postgres developer
+USER developer
+RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" && \
+    sed -i 's/^ZSH_THEME=".*"/ZSH_THEME="dallas"/' ~/.zshrc
