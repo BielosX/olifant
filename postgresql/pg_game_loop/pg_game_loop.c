@@ -16,6 +16,7 @@
 #include "storage/proc.h"
 #include "tcop/tcopprot.h"
 #include "utils/wait_classes.h"
+#include "commands/extension.h"
 
 PG_MODULE_MAGIC;
 
@@ -24,7 +25,9 @@ PGDLLEXPORT void orchestrator_main(Datum main_arg);
 PG_FUNCTION_INFO_V1(game_loop_run);
 
 static double TickMs = 33.3;
+static long MicroInSecond = 1000 * 1000;
 static char* DatabaseName = "postgres";
+static char* ExtensionName = "pg_game_loop";
 
 void _PG_init() {
     struct BackgroundWorker worker;
@@ -62,6 +65,23 @@ void _PG_init() {
     ereport(NOTICE, errmsg("pg_game_loop initialized, tick_ms: %f", TickMs));
 }
 
+static bool is_extension_loaded(void) {
+    Oid extensionOid;
+    StartTransactionCommand();
+    extensionOid = get_extension_oid(ExtensionName, true);
+    CommitTransactionCommand();
+    if (extensionOid == InvalidOid) {
+        return false;
+    }
+    if (creating_extension && CurrentExtensionObject == extensionOid) {
+        return false;
+    }
+    if (IsBinaryUpgrade) {
+        return false;
+    }
+    return true;
+}
+
 void orchestrator_main(Datum main_arg) {
     HeapTuple tuple;
     TupleDesc desc;
@@ -71,16 +91,21 @@ void orchestrator_main(Datum main_arg) {
 	pqsignal(SIGTERM, die);
     BackgroundWorkerInitializeConnection(DatabaseName, NULL, 0);
     BackgroundWorkerUnblockSignals();
+    while (!is_extension_loaded()) {
+        ereport(NOTICE, errmsg("Extension %s not fully loaded, waiting...", ExtensionName));
+        pg_usleep(MicroInSecond);
+    }
+    ereport(NOTICE, errmsg("Extension %s fully loaded", ExtensionName));
     ereport(NOTICE, errmsg("game_loop_orchestrator BackgroundWorker started"));
     for(;;) {
         if (proc_exit_inprogress) {
             proc_exit(0);
         }
-        StartTransactionCommand();
-        PushActiveSnapshot(GetTransactionSnapshot());
         if (SPI_connect() != SPI_OK_CONNECT) {
             ereport(ERROR, errmsg("SPI_connect failed"));
         }
+        StartTransactionCommand();
+        PushActiveSnapshot(GetTransactionSnapshot());
         ereport(NOTICE, errmsg("Fetching Postgres Version"));
         if (SPI_execute("SELECT version()", true, 0) != SPI_OK_SELECT) {
             ereport(ERROR, errmsg("SELECT failed"));
@@ -93,11 +118,12 @@ void orchestrator_main(Datum main_arg) {
 
             version = SPI_getvalue(tuple, desc, 1);
             ereport(NOTICE, errmsg("Postgres Version: %s", version));
+            SPI_freetuptable(SPI_tuptable);
         }
-        SPI_finish();
         PopActiveSnapshot();
         CommitTransactionCommand();
-        pg_usleep(1000 * 1000);
+        SPI_finish();
+        pg_usleep(MicroInSecond);
     }
 }
 
