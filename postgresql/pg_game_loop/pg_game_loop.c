@@ -25,7 +25,6 @@ PGDLLEXPORT void orchestrator_main(Datum main_arg);
 PG_FUNCTION_INFO_V1(game_loop_run);
 
 static double TickMs = 33.3;
-static long MicroInSecond = 1000 * 1000;
 static char* DatabaseName = "postgres";
 static char* ExtensionName = "pg_game_loop";
 
@@ -82,6 +81,18 @@ static bool is_extension_loaded(void) {
     return true;
 }
 
+static void wait_for_latch(int timeoutMs)
+{
+	int rc = 0;
+	int waitFlags = WL_LATCH_SET | WL_POSTMASTER_DEATH | WL_TIMEOUT;
+	rc = WaitLatch(MyLatch, waitFlags, timeoutMs, PG_WAIT_EXTENSION);
+	ResetLatch(MyLatch);
+	CHECK_FOR_INTERRUPTS();
+	if (rc & WL_POSTMASTER_DEATH) {
+		proc_exit(1);
+	}
+}
+
 void orchestrator_main(Datum main_arg) {
     HeapTuple tuple;
     TupleDesc desc;
@@ -93,14 +104,11 @@ void orchestrator_main(Datum main_arg) {
     BackgroundWorkerUnblockSignals();
     while (!is_extension_loaded()) {
         ereport(NOTICE, errmsg("Extension %s not fully loaded, waiting...", ExtensionName));
-        pg_usleep(MicroInSecond);
+        wait_for_latch(1000);
     }
     ereport(NOTICE, errmsg("Extension %s fully loaded", ExtensionName));
     ereport(NOTICE, errmsg("game_loop_orchestrator BackgroundWorker started"));
     for(;;) {
-        if (proc_exit_inprogress) {
-            proc_exit(0);
-        }
         if (SPI_connect() != SPI_OK_CONNECT) {
             ereport(ERROR, errmsg("SPI_connect failed"));
         }
@@ -123,7 +131,7 @@ void orchestrator_main(Datum main_arg) {
         PopActiveSnapshot();
         CommitTransactionCommand();
         SPI_finish();
-        pg_usleep(MicroInSecond);
+        wait_for_latch(1000);
     }
 }
 
