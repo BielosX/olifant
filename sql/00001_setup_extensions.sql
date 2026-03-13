@@ -1,5 +1,5 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE EXTENSION pg_cron;
-CREATE EXTENSION pg_game_loop;
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_game_loop;
 -- +goose StatementEnd

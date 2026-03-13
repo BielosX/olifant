@@ -24,7 +24,7 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	url := fmt.Sprintf("postgres://%s:%s@%s:%d/%s",
+	url := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?application_name=91b10ba2-ca19-479d-9734-56eb34896e5c",
 		cfg.Username,
 		cfg.Password,
 		cfg.Host,
@@ -39,7 +39,7 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	_, err = c.Exec(ctx, "LISTEN game")
+	_, err = c.Exec(ctx, "LISTEN \"91b10ba2-ca19-479d-9734-56eb34896e5c\"")
 	if err != nil {
 		panic(err.Error())
 	}
