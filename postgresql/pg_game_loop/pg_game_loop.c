@@ -204,7 +204,7 @@ void workerMain(Datum mainArg) {
     gameId = &args->gameId;
     uuid_str = getUUIDStr(&args->gameId);
     ereport(NOTICE, errmsg("%s BackgroundWorker started for game %s", MyBgworkerEntry->bgw_name, uuid_str));
-    deltaMicro = 0.0;
+    deltaMicro = 0;
     tickMicro = TickMs * 1000;
     for (;;) {
         INSTR_TIME_SET_CURRENT(start);
