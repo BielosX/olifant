@@ -194,18 +194,18 @@ void workerMain(Datum mainArg) {
     WorkerArgs *args;
     pg_uuid_t *gameId;
     char *uuid_str;
-    int updates;
+    int64 updates;
     int i;
     instr_time start, end;
-    double deltaMicro;
-    double tickMicro;
+    int64 deltaMicro;
+    int64 tickMicro;
     args = (WorkerArgs*)MyBgworkerEntry->bgw_extra;
     initWorker();
     gameId = &args->gameId;
     uuid_str = getUUIDStr(&args->gameId);
     ereport(NOTICE, errmsg("%s BackgroundWorker started for game %s", MyBgworkerEntry->bgw_name, uuid_str));
     deltaMicro = 0.0;
-    tickMicro = TickMs * 1000.0;
+    tickMicro = TickMs * 1000;
     for (;;) {
         INSTR_TIME_SET_CURRENT(start);
         StartTransactionCommand();
@@ -218,8 +218,8 @@ void workerMain(Datum mainArg) {
             proc_exit(0);
         }
         if (deltaMicro > tickMicro) {
-            updates = (int)(deltaMicro / tickMicro);
-            deltaMicro = fmod(deltaMicro, tickMicro);
+            updates = deltaMicro / tickMicro;
+            deltaMicro = deltaMicro % tickMicro;
             for (i = 0; i < updates; i++) {
                 callUpdateFunction(TickMs, gameId, args->updateFuncName);
             }
