@@ -1,7 +1,5 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE SCHEMA game;
-
 CREATE FUNCTION game.update(game_id UUID, tick_ms float8) RETURNS void AS $$
     BEGIN
         RAISE NOTICE 'game.update()';
