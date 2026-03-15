@@ -28,3 +28,43 @@ BEGIN
     INSERT INTO game_loop.games VALUES(game_id, player_name, 'INITIATED', update_function, current_ts, current_ts);
 END;
 $$ LANGUAGE plpgsql;
+
+CREATE FUNCTION game_loop.finish_orphans() RETURNS void AS $$
+DECLARE
+    now_ts TIMESTAMPTZ := clock_timestamp();
+    curs CURSOR FOR SELECT g.id as game_id, a.application_name as app_name
+                      FROM game_loop.games g
+                      LEFT JOIN pg_stat_activity a ON g.id::text = a.application_name
+                      WHERE g.game_state = 'RUNNING';
+BEGIN
+    FOR r IN curs LOOP
+        IF r.app_name IS NULL THEN
+            RAISE NOTICE 'Game % orphaned, finishing...', r.game_id;
+            UPDATE game_loop.games
+            SET game_state = 'FINISHED', last_update = now_ts
+            WHERE game_loop.games.id = r.game_id;
+        END IF;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION game_loop.delete_finished() RETURNS void AS $$
+DECLARE
+    now_ts TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    DELETE FROM game_loop.games as g
+           WHERE g.game_state = 'FINISHED' AND now_ts - g.last_update > interval '1 minute';
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT cron.schedule(
+   'finish_orphans',
+   '2 seconds',
+   'SELECT game_loop.finish_orphans()'
+);
+
+SELECT cron.schedule(
+   'delete_finished',
+   '30 seconds',
+   'SELECT game_loop.delete_finished()'
+);
