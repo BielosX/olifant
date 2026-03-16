@@ -15,7 +15,7 @@ CREATE TYPE game.inputs AS ENUM (
 
 CREATE TABLE game.input_events (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    game_id UUID,
+    game_id UUID REFERENCES game_loop.games (id) ON DELETE CASCADE,
     order_number BIGINT NOT NULL DEFAULT 0,
     event game.inputs,
     UNIQUE (game_id, order_number)
