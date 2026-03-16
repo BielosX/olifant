@@ -11,6 +11,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE FUNCTION vec.vec2_up() RETURNS vec.vec2 AS $$
+BEGIN
+    RETURN ARRAY[0.0, 1.0];
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION vec.vec2_right() RETURNS vec.vec2 AS $$
+BEGIN
+    RETURN ARRAY[1.0, 0.0];
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE FUNCTION vec.vec2_len(v vec.vec2) RETURNS float8 AS $$
 BEGIN
     RETURN sqrt(power(v[1], 2) + power(v[2], 2));
@@ -32,7 +44,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE FUNCTION vec.mul_scalar(vec vec.vec2, scalar float8) RETURNS vec.vec2 AS $$
+CREATE FUNCTION vec.vec2_mul_scalar(vec vec.vec2, scalar float8) RETURNS vec.vec2 AS $$
 BEGIN
     RETURN ARRAY[scalar * vec[1], scalar * vec[2]];
 END;
