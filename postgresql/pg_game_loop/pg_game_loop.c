@@ -31,6 +31,13 @@ static double TickMs = 33.3;
 static char* DatabaseName = "postgres";
 static char* ExtensionName = "pg_game_loop";
 
+#define MAX_GAME_FUNC_NAME_LEN 128 
+
+typedef struct GameFunctions {
+    char initName[MAX_GAME_FUNC_NAME_LEN];
+    char updateName[MAX_GAME_FUNC_NAME_LEN];
+} GameFunctions;
+
 void _PG_init() {
     struct BackgroundWorker worker;
     DefineCustomRealVariable(
@@ -81,14 +88,8 @@ static char* getUUIDStr(pg_uuid_t* uuid) {
 
 #define UPDATE_FUNC_NAME_MAX_LEN 64
 
-typedef struct WorkerArgs {
-    pg_uuid_t gameId;
-    char updateFuncName[UPDATE_FUNC_NAME_MAX_LEN];
-} WorkerArgs;
-
-static void runGameLoopWorker(pg_uuid_t* gameId, char* updateFuncName) {
+static void runGameLoopWorker(pg_uuid_t* gameId) {
     struct BackgroundWorker worker;
-    struct WorkerArgs args;
     char *uuid_str = getUUIDStr(gameId);
     snprintf(worker.bgw_name, BGW_MAXLEN, "game_loop_worker_%s", uuid_str);
     snprintf(worker.bgw_type, BGW_MAXLEN, "game_loop");
@@ -98,9 +99,7 @@ static void runGameLoopWorker(pg_uuid_t* gameId, char* updateFuncName) {
     worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
     worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
     worker.bgw_notify_pid = MyProcPid;
-    memcpy(&args.gameId, gameId, sizeof(pg_uuid_t));
-    strlcpy(args.updateFuncName, updateFuncName, UPDATE_FUNC_NAME_MAX_LEN);
-    memcpy(worker.bgw_extra, &args, sizeof(WorkerArgs));
+    memcpy(&worker.bgw_extra, gameId, sizeof(pg_uuid_t));
     pfree(uuid_str);
     RegisterDynamicBackgroundWorker(&worker, NULL);
 }
@@ -162,13 +161,18 @@ static bool isGameFinished(pg_uuid_t* gameId) {
     return true;
 }
 
-static void notifyClient(pg_uuid_t* gameId) {
+static void notifyClient(pg_uuid_t* gameId, bool isFinished) {
     StringInfoData buf;
     char *uuid_str;
     uuid_str = getUUIDStr(gameId);
     ereport(NOTICE, errmsg("Sending notification to %s", uuid_str));
     initStringInfo(&buf);
     appendStringInfo(&buf, "NOTIFY \"%s\"", uuid_str);
+    if (isFinished) {
+        appendStringInfo(&buf, ",'true'");
+    } else {
+        appendStringInfo(&buf, ",'false'");
+    }
     if(SPI_execute(buf.data, false, 0) != SPI_OK_UTILITY) {
         ereport(ERROR, errmsg("NOTIFY failed"));
     }
@@ -176,7 +180,30 @@ static void notifyClient(pg_uuid_t* gameId) {
     pfree(uuid_str);
 }
 
-static void callUpdateFunction(double delta, pg_uuid_t* gameId, char* functionName) {
+static void callInitFunction(pg_uuid_t* gameId, char* functionName) {
+    StringInfoData buf;
+    Datum values[1];
+    Oid argtypes[1] = {UUIDOID};
+    initStringInfo(&buf);
+    appendStringInfo(&buf, "SELECT %s($1)", functionName);
+    values[0] = UUIDPGetDatum(gameId);
+    StartTransactionCommand();
+    PushActiveSnapshot(GetTransactionSnapshot());
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        ereport(ERROR, errmsg("SPI_connect failed"));
+    }
+    if (SPI_execute_with_args(buf.data, 2, argtypes, values, NULL, false, 0) != SPI_OK_SELECT) {
+        ereport(ERROR, errmsg("Failed to call %s function", functionName));
+    }
+    resetStringInfo(&buf);
+    SPI_finish();
+    PopActiveSnapshot();
+    CommitTransactionCommand();
+}
+
+static bool callUpdateFunction(double delta, pg_uuid_t* gameId, char* functionName) {
+    bool isFinished = false;
+    bool isNull;
     StringInfoData buf;
     Datum values[2];
     Oid argtypes[2] = {UUIDOID, FLOAT8OID};
@@ -187,11 +214,39 @@ static void callUpdateFunction(double delta, pg_uuid_t* gameId, char* functionNa
     if (SPI_execute_with_args(buf.data, 2, argtypes, values, NULL, false, 0) != SPI_OK_SELECT) {
         ereport(ERROR, errmsg("Failed to call %s function", functionName));
     }
+    if (SPI_tuptable != NULL && SPI_processed) {
+        isFinished = DatumGetBool(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isNull));
+    }
     resetStringInfo(&buf);
+    return isFinished;
+}
+
+static void getGameFuncNames(pg_uuid_t* gameId, GameFunctions *functions) {
+    Datum values[1];
+    Oid argtypes[1] = {UUIDOID};
+    char* value;
+    char* query = "SELECT init_function, update_function FROM game_loop.games WHERE id=$1";
+    values[0] = UUIDPGetDatum(gameId);
+    StartTransactionCommand();
+    PushActiveSnapshot(GetTransactionSnapshot());
+    if (SPI_connect() != SPI_OK_CONNECT) {
+        ereport(ERROR, errmsg("SPI_connect failed"));
+    }
+    if (SPI_execute_with_args(query, 1, argtypes, values, NULL, false, 0) != SPI_OK_SELECT) {
+        ereport(ERROR, errmsg("Failed to get game functions"));
+    }
+    if (SPI_tuptable != NULL && SPI_processed > 0) {
+        value = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+        strlcpy(functions->initName, value, MAX_GAME_FUNC_NAME_LEN);
+        value = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 2);
+        strlcpy(functions->updateName, value, MAX_GAME_FUNC_NAME_LEN);
+    }
+    SPI_finish();
+    PopActiveSnapshot();
+    CommitTransactionCommand();
 }
 
 void workerMain(Datum mainArg) {
-    WorkerArgs *args;
     pg_uuid_t *gameId;
     char *uuid_str;
     int64 updates;
@@ -199,13 +254,16 @@ void workerMain(Datum mainArg) {
     instr_time start, end;
     int64 deltaMicro;
     int64 tickMicro;
-    args = (WorkerArgs*)MyBgworkerEntry->bgw_extra;
+    bool isFinished = false;
+    struct GameFunctions functions;
+    gameId = (pg_uuid_t*)MyBgworkerEntry->bgw_extra;
     initWorker();
-    gameId = &args->gameId;
-    uuid_str = getUUIDStr(&args->gameId);
+    uuid_str = getUUIDStr(gameId);
     ereport(NOTICE, errmsg("%s BackgroundWorker started for game %s", MyBgworkerEntry->bgw_name, uuid_str));
     deltaMicro = 0;
     tickMicro = TickMs * 1000;
+    getGameFuncNames(gameId, &functions);
+    callInitFunction(gameId, functions.initName);
     for (;;) {
         INSTR_TIME_SET_CURRENT(start);
         StartTransactionCommand();
@@ -221,9 +279,9 @@ void workerMain(Datum mainArg) {
             updates = deltaMicro / tickMicro;
             deltaMicro = deltaMicro % tickMicro;
             for (i = 0; i < updates; i++) {
-                callUpdateFunction(TickMs, gameId, args->updateFuncName);
+                isFinished = callUpdateFunction(TickMs, gameId, functions.updateName);
             }
-            notifyClient(gameId);
+            notifyClient(gameId, isFinished);
         } else {
             pg_usleep(500L);
         }
@@ -233,6 +291,9 @@ void workerMain(Datum mainArg) {
         INSTR_TIME_SET_CURRENT(end);
         INSTR_TIME_SUBTRACT(end, start);
         deltaMicro += INSTR_TIME_GET_MICROSEC(end);
+        if (isFinished) {
+            break;
+        }
     }
 }
 
@@ -255,12 +316,11 @@ static void setRunningState(pg_uuid_t* gameId) {
 
 void orchestratorMain(Datum main_arg) {
     pg_uuid_t *gameId;
-    char* updateFunction;
     HeapTuple tuple; 
     TupleDesc tupdesc;
     int i;
     bool isNull;
-    char* query = "SELECT id, update_function FROM game_loop.games WHERE game_state='INITIATED'";
+    char* query = "SELECT id FROM game_loop.games WHERE game_state='INITIATED'";
     initWorker();
     while (!isExtensionLoaded()) {
         ereport(NOTICE, errmsg("Extension %s not fully loaded, waiting...", ExtensionName));
@@ -284,10 +344,8 @@ void orchestratorMain(Datum main_arg) {
             for(i = 0; i < SPI_processed; i++) {
                 tuple = SPI_tuptable->vals[i];
                 gameId = DatumGetUUIDP(SPI_getbinval(tuple, tupdesc, 1, &isNull));
-                updateFunction = SPI_getvalue(tuple, tupdesc, 2);
-                ereport(NOTICE, errmsg("Using updateFunction %s", updateFunction));
                 ereport(NOTICE, errmsg("Starting a game with ID %s", getUUIDStr(gameId)));
-                runGameLoopWorker(gameId, updateFunction);
+                runGameLoopWorker(gameId);
                 SPI_freetuptable(SPI_tuptable);
                 setRunningState(gameId);
             }

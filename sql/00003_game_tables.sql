@@ -35,4 +35,20 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_set_order_number
     BEFORE INSERT ON game.input_events
     FOR EACH ROW EXECUTE FUNCTION game.set_order_number();
+
+CREATE TABLE game.players (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    game_id UUID REFERENCES game_loop.games (id) ON DELETE CASCADE,
+    position vec.vec2,
+    velocity vec.vec2,
+    score INTEGER
+);
+
+CREATE TABLE game.consts (
+    key CHAR(64) PRIMARY KEY,
+    value JSONB
+);
+
+INSERT INTO game.consts (key, value) VALUES
+    ('bounding_circle_radius', '{"player": 0.1}'::jsonb);
 -- +goose StatementEnd
