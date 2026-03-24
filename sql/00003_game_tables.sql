@@ -36,11 +36,19 @@ CREATE TRIGGER trg_set_order_number
     BEFORE INSERT ON game.input_events
     FOR EACH ROW EXECUTE FUNCTION game.set_order_number();
 
+CREATE TYPE game.keysState AS (
+    _up boolean,
+    _down boolean,
+    _left boolean,
+    _right boolean
+);
+
 CREATE TABLE game.players (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    game_id UUID REFERENCES game_loop.games (id) ON DELETE CASCADE,
+    game_id UUID UNIQUE REFERENCES game_loop.games (id) ON DELETE CASCADE,
     position vec.vec2,
     velocity vec.vec2,
+    keysPressed game.keysState,
     score INTEGER
 );
 

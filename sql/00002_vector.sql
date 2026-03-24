@@ -17,6 +17,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE FUNCTION vec.vec2_down() RETURNS vec.vec2 AS $$
+BEGIN
+    RETURN ARRAY[0.0, -1.0];
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION vec.vec2_left() RETURNS vec.vec2 AS $$
+BEGIN
+    RETURN ARRAY[-1.0, 0.0];
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE FUNCTION vec.vec2_right() RETURNS vec.vec2 AS $$
 BEGIN
     RETURN ARRAY[1.0, 0.0];
