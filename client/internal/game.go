@@ -99,7 +99,7 @@ func (g *Game) Start() error {
 		g.listenerCancel()
 		return err
 	}
-	_, err = c.Exec(ctx, fmt.Sprintf("SELECT game.start_game('%s', 'test')", g.id.String()))
+	_, err = c.Exec(ctx, "SELECT game.start_game($1, $2)", g.id.String(), "test")
 	if err != nil {
 		g.listenerCancel()
 		return err
