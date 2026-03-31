@@ -2,9 +2,10 @@ package main
 
 import (
 	"client/internal"
-	"fmt"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/hajimehoshi/ebiten/v2"
+	_ "github.com/hajimehoshi/ebiten/v2"
 )
 
 func main() {
@@ -21,8 +22,9 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	for {
-		value := <-game.Events
-		fmt.Printf("Notification value: %v\n", value)
+	err = ebiten.RunGame(game)
+	if err != nil {
+		panic(err.Error())
 	}
+	game.Finish()
 }
