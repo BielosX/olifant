@@ -142,20 +142,61 @@ func (g *Game) Start() error {
 	return nil
 }
 
-type GameInput string
+type GameInputEvent string
 
 const (
-	UpPressed     GameInput = "UP_PRESSED"
-	UpReleased    GameInput = "UP_RELEASED"
-	DownPressed   GameInput = "DOWN_PRESSED"
-	DownReleased  GameInput = "DOWN_RELEASED"
-	LeftPressed   GameInput = "LEFT_PRESSED"
-	LeftReleased  GameInput = "LEFT_RELEASED"
-	RightPressed  GameInput = "RIGHT_PRESSED"
-	RightReleased GameInput = "RIGHT_RELEASED"
+	UpPressed     GameInputEvent = "UP_PRESSED"
+	UpReleased    GameInputEvent = "UP_RELEASED"
+	DownPressed   GameInputEvent = "DOWN_PRESSED"
+	DownReleased  GameInputEvent = "DOWN_RELEASED"
+	LeftPressed   GameInputEvent = "LEFT_PRESSED"
+	LeftReleased  GameInputEvent = "LEFT_RELEASED"
+	RightPressed  GameInputEvent = "RIGHT_PRESSED"
+	RightReleased GameInputEvent = "RIGHT_RELEASED"
 )
 
-func (g *Game) SendInputEvent(input GameInput) error {
+type GameInput int32
+
+const (
+	UpInput GameInput = iota
+	DownInput
+	LeftInput
+	RightInput
+)
+
+type gameInputProps struct {
+	Key           ebiten.Key
+	PressedEvent  GameInputEvent
+	ReleasedEvent GameInputEvent
+}
+
+var gameInputMapping map[GameInput]gameInputProps
+
+func init() {
+	gameInputMapping = make(map[GameInput]gameInputProps)
+	gameInputMapping[UpInput] = gameInputProps{
+		Key:           ebiten.KeyW,
+		PressedEvent:  UpPressed,
+		ReleasedEvent: UpReleased,
+	}
+	gameInputMapping[DownInput] = gameInputProps{
+		Key:           ebiten.KeyS,
+		PressedEvent:  DownPressed,
+		ReleasedEvent: DownReleased,
+	}
+	gameInputMapping[LeftInput] = gameInputProps{
+		Key:           ebiten.KeyA,
+		PressedEvent:  LeftPressed,
+		ReleasedEvent: LeftReleased,
+	}
+	gameInputMapping[RightInput] = gameInputProps{
+		Key:           ebiten.KeyD,
+		PressedEvent:  RightPressed,
+		ReleasedEvent: RightReleased,
+	}
+}
+
+func (g *Game) SendInputEvent(input GameInputEvent) error {
 	ctx := context.Background()
 	c, err := g.pool.Acquire(ctx)
 	if err != nil {
@@ -223,52 +264,18 @@ func (g *Game) Update() error {
 		position := r2.Add(g.player.Position, r2.Scale(1.0/60.0, g.player.Velocity))
 		g.player.Position = position
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyW) {
-		err := g.SendInputEvent(UpPressed)
-		if err != nil {
-			return err
+	for _, v := range gameInputMapping {
+		if inpututil.IsKeyJustPressed(v.Key) {
+			err := g.SendInputEvent(v.PressedEvent)
+			if err != nil {
+				return err
+			}
 		}
-	}
-	if inpututil.IsKeyJustReleased(ebiten.KeyW) {
-		err := g.SendInputEvent(UpReleased)
-		if err != nil {
-			return err
-		}
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyS) {
-		err := g.SendInputEvent(DownPressed)
-		if err != nil {
-			return err
-		}
-	}
-	if inpututil.IsKeyJustReleased(ebiten.KeyS) {
-		err := g.SendInputEvent(DownReleased)
-		if err != nil {
-			return err
-		}
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyA) {
-		err := g.SendInputEvent(LeftPressed)
-		if err != nil {
-			return err
-		}
-	}
-	if inpututil.IsKeyJustReleased(ebiten.KeyA) {
-		err := g.SendInputEvent(LeftReleased)
-		if err != nil {
-			return err
-		}
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyD) {
-		err := g.SendInputEvent(RightPressed)
-		if err != nil {
-			return err
-		}
-	}
-	if inpututil.IsKeyJustReleased(ebiten.KeyD) {
-		err := g.SendInputEvent(RightReleased)
-		if err != nil {
-			return err
+		if inpututil.IsKeyJustReleased(v.Key) {
+			err := g.SendInputEvent(v.ReleasedEvent)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
