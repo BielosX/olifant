@@ -12,6 +12,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/errgroup"
@@ -44,7 +45,7 @@ type Game struct {
 	context context.Context
 	cancel  context.CancelFunc
 	events  chan bool
-	inputs  chan GameInputEvent
+	inputs  chan []GameInputEvent
 	group   *errgroup.Group
 	player  *Player
 }
@@ -74,7 +75,7 @@ func NewGame(cfg *Config) (*Game, error) {
 		return nil, err
 	}
 	events := make(chan bool, 1024)
-	inputs := make(chan GameInputEvent, 1024)
+	inputs := make(chan []GameInputEvent, 1024)
 	player := NewPlayer()
 	ctx, cancel := context.WithCancel(context.Background())
 	group, _ := errgroup.WithContext(ctx)
@@ -92,8 +93,8 @@ func NewGame(cfg *Config) (*Game, error) {
 
 func (g *Game) sendEvents() error {
 	for {
-		input := <-g.inputs
-		err := g.SendInputEvent(input)
+		inputs := <-g.inputs
+		err := g.SendInputEvents(inputs)
 		if err != nil {
 			return err
 		}
@@ -200,25 +201,27 @@ func init() {
 	}
 }
 
-func (g *Game) SendInputEvent(input GameInputEvent) error {
-	ctx := context.Background()
-	c, err := g.pool.Acquire(ctx)
+func (g *Game) SendInputEvents(events []GameInputEvent) error {
+	c, err := g.pool.Acquire(g.context)
 	if err != nil {
 		return err
 	}
 	defer c.Release()
-	_, err = c.Exec(ctx, "INSERT INTO game.input_events (game_id, event) VALUES ($1, $2)", g.id.String(), input)
-	return err
+	batch := &pgx.Batch{}
+	for _, event := range events {
+		batch.Queue("INSERT INTO game.input_events (game_id, event) VALUES ($1, $2)", g.id.String(), event)
+	}
+	br := c.SendBatch(g.context, batch)
+	return br.Close()
 }
 
 func (g *Game) GetPlayer() (*Player, error) {
-	ctx := context.Background()
-	c, err := g.pool.Acquire(ctx)
+	c, err := g.pool.Acquire(g.context)
 	if err != nil {
 		return nil, err
 	}
 	defer c.Release()
-	r, err := c.Query(ctx, "SELECT position, velocity, score FROM game.players WHERE game_id=$1", g.id.String())
+	r, err := c.Query(g.context, "SELECT position, velocity, score FROM game.players WHERE game_id=$1", g.id.String())
 	if err != nil {
 		return nil, err
 	}
@@ -270,15 +273,17 @@ func (g *Game) Update() error {
 		position := r2.Add(g.player.Position, r2.Scale(1.0/60.0, g.player.Velocity))
 		g.player.Position = position
 	}
+	var events []GameInputEvent
 	for _, v := range gameInputMapping {
 		if inpututil.IsKeyJustPressed(v.Key) {
-			g.inputs <- v.PressedEvent
+			events = append(events, v.PressedEvent)
 		}
 		if inpututil.IsKeyJustReleased(v.Key) {
-			g.inputs <- v.ReleasedEvent
+			events = append(events, v.ReleasedEvent)
 
 		}
 	}
+	g.inputs <- events
 	return nil
 }
 
