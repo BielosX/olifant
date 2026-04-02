@@ -14,6 +14,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/sync/errgroup"
 	"gonum.org/v1/gonum/spatial/r2"
 )
 
@@ -38,14 +39,14 @@ func NewPlayer() *Player {
 }
 
 type Game struct {
-	id              uuid.UUID
-	pool            *pgxpool.Pool
-	listenerErrors  chan error
-	Events          chan bool
-	listenerContext context.Context
-	listenerCancel  context.CancelFunc
-	listenerWait    chan struct{}
-	player          *Player
+	id      uuid.UUID
+	pool    *pgxpool.Pool
+	context context.Context
+	cancel  context.CancelFunc
+	events  chan bool
+	inputs  chan GameInputEvent
+	group   *errgroup.Group
+	player  *Player
 }
 
 func getPostgresUrl(cfg *Config, appName string) string {
@@ -72,71 +73,74 @@ func NewGame(cfg *Config) (*Game, error) {
 	if err != nil {
 		return nil, err
 	}
-	listenerErrors := make(chan error, 16)
 	events := make(chan bool, 1024)
-	listenerWait := make(chan struct{})
-	listenerContext, listenerCancel := context.WithCancel(context.Background())
+	inputs := make(chan GameInputEvent, 1024)
 	player := NewPlayer()
+	ctx, cancel := context.WithCancel(context.Background())
+	group, _ := errgroup.WithContext(ctx)
 	return &Game{
 		id,
 		pool,
-		listenerErrors,
+		ctx,
+		cancel,
 		events,
-		listenerContext,
-		listenerCancel,
-		listenerWait,
+		inputs,
+		group,
 		player,
 	}, nil
 }
 
-func (g *Game) listen() {
-	c, err := g.pool.Acquire(g.listenerContext)
+func (g *Game) sendEvents() error {
+	for {
+		input := <-g.inputs
+		err := g.SendInputEvent(input)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func (g *Game) listen() error {
+	c, err := g.pool.Acquire(g.context)
 	if err != nil {
-		g.listenerErrors <- err
-		g.listenerWait <- struct{}{}
-		return
+		return err
 	}
 	defer c.Release()
-	_, err = c.Exec(g.listenerContext, fmt.Sprintf("LISTEN \"%s\"", g.id))
+	_, err = c.Exec(g.context, fmt.Sprintf("LISTEN \"%s\"", g.id))
 	if err != nil {
-		g.listenerErrors <- err
-		g.listenerWait <- struct{}{}
-		return
+		return err
 	}
 	for {
 		select {
-		case <-g.listenerContext.Done():
-			g.listenerWait <- struct{}{}
-			return
+		case <-g.context.Done():
+			return nil
 		default:
 			var n *pgconn.Notification
-			n, err = c.Conn().WaitForNotification(g.listenerContext)
+			n, err = c.Conn().WaitForNotification(g.context)
 			if err != nil {
-				g.listenerErrors <- err
-				continue
+				return err
 			}
 			b, err := strconv.ParseBool(n.Payload)
 			if err != nil {
-				g.listenerErrors <- err
-				continue
+				return err
 			}
-			g.Events <- b
+			g.events <- b
 		}
 	}
 }
 
 func (g *Game) Start() error {
-	go g.listen()
-	ctx := context.Background()
-	c, err := g.pool.Acquire(ctx)
+	g.group.Go(g.listen)
+	g.group.Go(g.sendEvents)
+	c, err := g.pool.Acquire(g.context)
 	if err != nil {
-		g.listenerCancel()
+		g.cancel()
 		return err
 	}
 	defer c.Release()
-	_, err = c.Exec(ctx, "SELECT game.start_game($1, $2)", g.id.String(), "test")
+	_, err = c.Exec(g.context, "SELECT game.start_game($1, $2)", g.id.String(), "test")
 	if err != nil {
-		g.listenerCancel()
+		g.cancel()
 		return err
 	}
 	return nil
@@ -244,14 +248,16 @@ func (g *Game) GetPlayer() (*Player, error) {
 	}, nil
 }
 
-func (g *Game) Finish() {
-	g.listenerCancel()
-	<-g.listenerWait
+func (g *Game) Finish() error {
+	g.cancel()
+	return g.group.Wait()
 }
 
 func (g *Game) Update() error {
 	select {
-	case isFinished := <-g.Events:
+	case <-g.context.Done():
+		return nil
+	case isFinished := <-g.events:
 		if isFinished {
 			os.Exit(0)
 		}
@@ -266,16 +272,11 @@ func (g *Game) Update() error {
 	}
 	for _, v := range gameInputMapping {
 		if inpututil.IsKeyJustPressed(v.Key) {
-			err := g.SendInputEvent(v.PressedEvent)
-			if err != nil {
-				return err
-			}
+			g.inputs <- v.PressedEvent
 		}
 		if inpututil.IsKeyJustReleased(v.Key) {
-			err := g.SendInputEvent(v.ReleasedEvent)
-			if err != nil {
-				return err
-			}
+			g.inputs <- v.ReleasedEvent
+
 		}
 	}
 	return nil

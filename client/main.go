@@ -26,5 +26,8 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	game.Finish()
+	err = game.Finish()
+	if err != nil {
+		panic(err.Error())
+	}
 }
