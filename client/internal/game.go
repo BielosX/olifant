@@ -336,6 +336,19 @@ func (g *Game) Update() error {
 	return nil
 }
 
+func toVertex(vec r2.Vec, color color.Color) ebiten.Vertex {
+	r, g, b, a := color.RGBA()
+	maxValue := float32(0xffff)
+	return ebiten.Vertex{
+		DstX:   float32(vec.X),
+		DstY:   float32(vec.Y),
+		ColorR: float32(r) / maxValue,
+		ColorG: float32(g) / maxValue,
+		ColorB: float32(b) / maxValue,
+		ColorA: float32(a) / maxValue,
+	}
+}
+
 func (g *Game) drawPlayer(screen *ebiten.Image) {
 	dir := r2.Scale(g.consts.PlayerBoundingCircleRadius, g.player.Direction)
 	pos := g.player.Position
@@ -345,41 +358,14 @@ func (g *Game) drawPlayer(screen *ebiten.Image) {
 	right := r2.Add(r2.Rotate(dir, angle, ZeroVec), pos)
 	front := r2.Add(dir, pos)
 	op := &ebiten.DrawTrianglesOptions{}
-	screenX := float32(screen.Bounds().Dx())
-	screenY := float32(screen.Bounds().Dy())
-	vertices := []ebiten.Vertex{
-		{
-			DstX:   float32(front.X) * screenX,
-			DstY:   float32(1.0-front.Y) * screenY,
-			ColorA: 1.0,
-			ColorR: 1.0,
-			ColorG: 1.0,
-			ColorB: 1.0,
-		},
-		{
-			DstX:   float32(right.X) * screenX,
-			DstY:   float32(1.0-right.Y) * screenY,
-			ColorA: 1.0,
-			ColorR: 1.0,
-			ColorG: 1.0,
-			ColorB: 1.0,
-		},
-		{
-			DstX:   float32(left.X) * screenX,
-			DstY:   float32(1.0-left.Y) * screenY,
-			ColorA: 1.0,
-			ColorR: 1.0,
-			ColorG: 1.0,
-			ColorB: 1.0,
-		},
-		{
-			DstX:   float32(back.X) * screenX,
-			DstY:   float32(1.0-back.Y) * screenY,
-			ColorA: 1.0,
-			ColorR: 1.0,
-			ColorG: 1.0,
-			ColorB: 1.0,
-		},
+	screenX := float64(screen.Bounds().Dx())
+	screenY := float64(screen.Bounds().Dy())
+	vertices := make([]ebiten.Vertex, 4)
+	for i, v := range []r2.Vec{front, right, left, back} {
+		vertices[i] = toVertex(r2.Vec{
+			X: v.X * screenX,
+			Y: (1.0 - v.Y) * screenY,
+		}, color.White)
 	}
 	screen.DrawTriangles(vertices, []uint16{0, 1, 2, 2, 1, 3}, g.sample, op)
 }
