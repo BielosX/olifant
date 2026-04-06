@@ -48,6 +48,7 @@ CREATE TABLE game.players (
     game_id UUID UNIQUE REFERENCES game_loop.games (id) ON DELETE CASCADE,
     position vec.vec2,
     velocity vec.vec2,
+    direction vec.vec2,
     keysPressed game.keysState,
     score INTEGER
 );
@@ -58,5 +59,5 @@ CREATE TABLE game.consts (
 );
 
 INSERT INTO game.consts (key, value) VALUES
-    ('bounding_circle_radius', '{"player": 0.1}'::jsonb);
+    ('bounding_circle_radius', '{"player": 0.05}'::jsonb);
 -- +goose StatementEnd

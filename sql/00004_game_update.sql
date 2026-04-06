@@ -3,10 +3,11 @@
 
 CREATE FUNCTION game.init(game_id UUID) RETURNS void AS $$
 BEGIN
-    INSERT INTO game.players (game_id, position, velocity, keysPressed, score) VALUES
+    INSERT INTO game.players (game_id, position, velocity, direction, keysPressed, score) VALUES
         (game_id,
          ARRAY[0.5, 0.5],
          vec.vec2_zero(),
+         vec.vec2_up(),
          ROW(false, false, false, false),
          0);
 END;
@@ -64,6 +65,7 @@ DECLARE
     player game.players%ROWTYPE;
     keys game.keysState;
     v_velocity vec.vec2;
+    v_direction vec.vec2;
     v_position vec.vec2;
     events CURSOR FOR SELECT * FROM game.input_events
                                WHERE game_id=v_game_id ORDER BY order_number ASC LIMIT 10 FOR UPDATE;
@@ -78,8 +80,13 @@ BEGIN
     v_velocity := vec.vec2_mul_scalar(game.keys_to_velocity(keys), 0.3);
     v_velocity := vec.vec2_mul_scalar(v_velocity, tick_s);
     v_position := vec.vec2_add(player.position, v_velocity);
+    IF vec.vec2_len(v_velocity) > 1e-6 THEN
+        v_direction := vec.vec2_normalize(v_velocity);
+    ELSE
+        v_direction := player.direction;
+    END IF;
     UPDATE game.players
-        SET velocity=v_velocity, position=v_position, keysPressed=keys
+        SET velocity=v_velocity, position=v_position, keysPressed=keys, direction=v_direction
         WHERE id=player.id;
     RETURN false;
 END;

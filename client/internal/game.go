@@ -2,16 +2,17 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image/color"
+	"math"
 	"os"
 	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
-	"github.com/hajimehoshi/ebiten/v2/vector"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,10 +20,17 @@ import (
 	"gonum.org/v1/gonum/spatial/r2"
 )
 
+const BoundingCircleRadiusKey = "bounding_circle_radius"
+
+type GameConsts struct {
+	PlayerBoundingCircleRadius float64
+}
+
 type Player struct {
-	Position r2.Vec
-	Velocity r2.Vec
-	Score    int32
+	Position  r2.Vec
+	Velocity  r2.Vec
+	Direction r2.Vec
+	Score     int32
 }
 
 func NewPlayer() *Player {
@@ -34,6 +42,10 @@ func NewPlayer() *Player {
 		Velocity: r2.Vec{
 			X: 0.0,
 			Y: 0.0,
+		},
+		Direction: r2.Vec{
+			X: 0.0,
+			Y: 1.0,
 		},
 		Score: 0,
 	}
@@ -48,6 +60,8 @@ type Game struct {
 	inputs  chan []GameInputEvent
 	group   *errgroup.Group
 	player  *Player
+	consts  GameConsts
+	sample  *ebiten.Image
 }
 
 func getPostgresUrl(cfg *Config, appName string) string {
@@ -79,6 +93,9 @@ func NewGame(cfg *Config) (*Game, error) {
 	player := NewPlayer()
 	ctx, cancel := context.WithCancel(context.Background())
 	group, _ := errgroup.WithContext(ctx)
+	consts := GameConsts{}
+	sample := ebiten.NewImage(1, 1)
+	sample.Fill(color.White)
 	return &Game{
 		id,
 		pool,
@@ -88,6 +105,8 @@ func NewGame(cfg *Config) (*Game, error) {
 		inputs,
 		group,
 		player,
+		consts,
+		sample,
 	}, nil
 }
 
@@ -139,6 +158,12 @@ func (g *Game) Start() error {
 		return err
 	}
 	defer c.Release()
+	v, err := g.GetConst(BoundingCircleRadiusKey)
+	g.consts.PlayerBoundingCircleRadius = v.(map[string]any)["player"].(float64)
+	if err != nil {
+		g.cancel()
+		return err
+	}
 	_, err = c.Exec(g.context, "SELECT game.start_game($1, $2)", g.id.String(), "test")
 	if err != nil {
 		g.cancel()
@@ -215,28 +240,43 @@ func (g *Game) SendInputEvents(events []GameInputEvent) error {
 	return br.Close()
 }
 
+func (g *Game) GetConst(key string) (any, error) {
+	c, err := g.pool.Acquire(g.context)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Release()
+	r := c.QueryRow(g.context, "SELECT value FROM game.consts WHERE key=$1", key)
+	var raw []byte
+	err = r.Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	var result any
+	err = json.Unmarshal(raw, &result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (g *Game) GetPlayer() (*Player, error) {
 	c, err := g.pool.Acquire(g.context)
 	if err != nil {
 		return nil, err
 	}
 	defer c.Release()
-	r, err := c.Query(g.context, "SELECT position, velocity, score FROM game.players WHERE game_id=$1", g.id.String())
-	if err != nil {
-		return nil, err
-	}
-	if !r.Next() {
-		return nil, errors.New(fmt.Sprintf("player with game_id=%s not found", g.id.String()))
-	}
+	r := c.QueryRow(g.context, "SELECT position, velocity, direction, score FROM game.players WHERE game_id=$1", g.id.String())
 	var position []float64
 	var velocity []float64
+	var direction []float64
 	var score int32
-	err = r.Scan(&position, &velocity, &score)
+	err = r.Scan(&position, &velocity, &direction, &score)
 	if err != nil {
 		return nil, err
 	}
-	if !(len(position) == 2 && len(velocity) == 2) {
-		return nil, errors.New("position and Velocity should have len == 2")
+	if !(len(position) == 2 && len(velocity) == 2 && len(direction) == 2) {
+		return nil, errors.New("position, velocity and direction should have len == 2")
 	}
 	return &Player{
 		Position: r2.Vec{
@@ -246,6 +286,10 @@ func (g *Game) GetPlayer() (*Player, error) {
 		Velocity: r2.Vec{
 			X: velocity[0],
 			Y: velocity[1],
+		},
+		Direction: r2.Vec{
+			X: direction[0],
+			Y: direction[1],
 		},
 		Score: score,
 	}, nil
@@ -287,13 +331,60 @@ func (g *Game) Update() error {
 	return nil
 }
 
+func (g *Game) drawPlayer(screen *ebiten.Image) {
+	dir := r2.Scale(g.consts.PlayerBoundingCircleRadius, g.player.Direction)
+	pos := g.player.Position
+	zero := r2.Vec{
+		X: 0,
+		Y: 0,
+	}
+	angle := 2 * math.Pi / 3
+	back := r2.Add(r2.Scale(-1.0, dir), pos)
+	left := r2.Add(r2.Rotate(dir, -angle, zero), pos)
+	right := r2.Add(r2.Rotate(dir, angle, zero), pos)
+	front := r2.Add(dir, pos)
+	op := &ebiten.DrawTrianglesOptions{}
+	screenX := float32(screen.Bounds().Dx())
+	screenY := float32(screen.Bounds().Dy())
+	vertices := []ebiten.Vertex{
+		{
+			DstX:   float32(front.X) * screenX,
+			DstY:   float32(1.0-front.Y) * screenY,
+			ColorA: 1.0,
+			ColorR: 1.0,
+			ColorG: 1.0,
+			ColorB: 1.0,
+		},
+		{
+			DstX:   float32(right.X) * screenX,
+			DstY:   float32(1.0-right.Y) * screenY,
+			ColorA: 1.0,
+			ColorR: 1.0,
+			ColorG: 1.0,
+			ColorB: 1.0,
+		},
+		{
+			DstX:   float32(left.X) * screenX,
+			DstY:   float32(1.0-left.Y) * screenY,
+			ColorA: 1.0,
+			ColorR: 1.0,
+			ColorG: 1.0,
+			ColorB: 1.0,
+		},
+		{
+			DstX:   float32(back.X) * screenX,
+			DstY:   float32(1.0-back.Y) * screenY,
+			ColorA: 1.0,
+			ColorR: 1.0,
+			ColorG: 1.0,
+			ColorB: 1.0,
+		},
+	}
+	screen.DrawTriangles(vertices, []uint16{0, 1, 2, 2, 1, 3}, g.sample, op)
+}
+
 func (g *Game) Draw(screen *ebiten.Image) {
-	position := g.player.Position
-	dy := float64(screen.Bounds().Dy())
-	x := float32(position.X * float64(screen.Bounds().Dx()))
-	y := float32(dy - position.Y*dy)
-	screen.Fill(color.Black)
-	vector.FillRect(screen, x, y, 20.0, 20.0, color.White, false)
+	g.drawPlayer(screen)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
