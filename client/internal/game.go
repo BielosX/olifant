@@ -360,14 +360,14 @@ func (g *Game) drawPlayer(screen *ebiten.Image) {
 	op := &ebiten.DrawTrianglesOptions{}
 	screenX := float64(screen.Bounds().Dx())
 	screenY := float64(screen.Bounds().Dy())
-	vertices := make([]ebiten.Vertex, 4)
+	var vertices [4]ebiten.Vertex
 	for i, v := range []r2.Vec{front, right, left, back} {
 		vertices[i] = toVertex(r2.Vec{
 			X: v.X * screenX,
 			Y: (1.0 - v.Y) * screenY,
 		}, color.White)
 	}
-	screen.DrawTriangles(vertices, []uint16{0, 1, 2, 2, 1, 3}, g.sample, op)
+	screen.DrawTriangles(vertices[:], []uint16{0, 1, 2, 2, 1, 3}, g.sample, op)
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
