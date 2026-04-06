@@ -350,12 +350,15 @@ func toVertex(vec r2.Vec, color color.Color) ebiten.Vertex {
 }
 
 func (g *Game) drawPlayer(screen *ebiten.Image) {
-	dir := r2.Scale(g.consts.PlayerBoundingCircleRadius, g.player.Direction)
+	playerDir := g.player.Direction
+	dir := r2.Scale(g.consts.PlayerBoundingCircleRadius, playerDir)
 	pos := g.player.Position
 	angle := 2 * math.Pi / 3
 	back := r2.Add(r2.Scale(-1.0, dir), pos)
-	left := r2.Add(r2.Rotate(dir, -angle, ZeroVec), pos)
-	right := r2.Add(r2.Rotate(dir, angle, ZeroVec), pos)
+	rightDir := r2.Rotate(dir, angle, ZeroVec)
+	right := r2.Add(rightDir, pos)
+	leftDir := r2.Sub(r2.Scale(2.0*r2.Dot(rightDir, playerDir), playerDir), rightDir)
+	left := r2.Add(leftDir, pos)
 	front := r2.Add(dir, pos)
 	op := &ebiten.DrawTrianglesOptions{}
 	screenX := float64(screen.Bounds().Dx())
