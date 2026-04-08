@@ -13,9 +13,15 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE FUNCTION game.clamp(val float8, min_value float8, max_value float8) RETURNS float8 AS $$
+CREATE FUNCTION game.clamp(val float8, min_value float8, max_value float8, margin float8) RETURNS float8 AS $$
 BEGIN
-    RETURN GREATEST(min_value, LEAST(val, max_value));
+    IF val + margin > max_value THEN
+       RETURN max_value - margin;
+    END IF;
+    IF val - margin < min_value THEN
+       RETURN min_value + margin;
+    END IF;
+    RETURN val;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -62,6 +68,8 @@ $$ LANGUAGE plpgsql;
 CREATE FUNCTION game.update(v_game_id UUID, tick_ms float8) RETURNS boolean AS $$
 DECLARE
     tick_s float8;
+    bounding_radius jsonb;
+    player_bounding_radius float8;
     player game.players%ROWTYPE;
     keys game.keysState;
     v_velocity vec.vec2;
@@ -71,6 +79,11 @@ DECLARE
                                WHERE game_id=v_game_id ORDER BY order_number ASC LIMIT 10 FOR UPDATE;
 BEGIN
     tick_s := tick_ms / 1000.0;
+    SELECT value
+    INTO bounding_radius
+    FROM game.consts
+    WHERE key='bounding_circle_radius';
+    player_bounding_radius := (bounding_radius->>'player')::float8;
     SELECT * INTO player FROM game.players WHERE game_id=v_game_id;
     keys := player.keysPressed;
     FOR e in events LOOP
@@ -80,6 +93,8 @@ BEGIN
     v_velocity := vec.vec2_mul_scalar(game.keys_to_velocity(keys), 0.3);
     v_velocity := vec.vec2_mul_scalar(v_velocity, tick_s);
     v_position := vec.vec2_add(player.position, v_velocity);
+    v_position[1] = game.clamp(v_position[1], 0.0, 1.0, player_bounding_radius);
+    v_position[2] = game.clamp(v_position[2], 0.0, 1.0, player_bounding_radius);
     IF vec.vec2_len(v_velocity) > 1e-6 THEN
         v_direction := vec.vec2_normalize(v_velocity);
     ELSE

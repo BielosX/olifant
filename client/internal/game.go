@@ -22,9 +22,18 @@ import (
 
 const BoundingCircleRadiusKey = "bounding_circle_radius"
 
+var GameFinished = errors.New("GameFinished")
+
 var ZeroVec = r2.Vec{
 	X: 0.0,
 	Y: 0.0,
+}
+
+var BlueColor = color.RGBA{
+	A: 255,
+	R: 0,
+	G: 0,
+	B: 255,
 }
 
 type GameConsts struct {
@@ -302,6 +311,8 @@ func (g *Game) GetPlayer() (*Player, error) {
 
 func (g *Game) Finish() error {
 	g.cancel()
+	close(g.inputs)
+	close(g.events)
 	return g.group.Wait()
 }
 
@@ -323,6 +334,10 @@ func (g *Game) Update() error {
 		g.player.Position = position
 	}
 	var events []GameInputEvent
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		g.cancel()
+		return GameFinished
+	}
 	for _, v := range gameInputMapping {
 		if inpututil.IsKeyJustPressed(v.Key) {
 			events = append(events, v.PressedEvent)
@@ -368,7 +383,7 @@ func (g *Game) drawPlayer(screen *ebiten.Image) {
 		vertices[i] = toVertex(r2.Vec{
 			X: v.X * screenX,
 			Y: (1.0 - v.Y) * screenY,
-		}, color.White)
+		}, BlueColor)
 	}
 	screen.DrawTriangles(vertices[:], []uint16{0, 1, 2, 2, 1, 3}, g.sample, op)
 }

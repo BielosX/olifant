@@ -2,6 +2,8 @@ package main
 
 import (
 	"client/internal"
+	"context"
+	"errors"
 
 	"github.com/caarlos0/env/v11"
 	"github.com/hajimehoshi/ebiten/v2"
@@ -23,11 +25,11 @@ func main() {
 		panic(err.Error())
 	}
 	err = ebiten.RunGame(game)
-	if err != nil {
+	if err != nil && !errors.Is(err, internal.GameFinished) {
 		panic(err.Error())
 	}
 	err = game.Finish()
-	if err != nil {
+	if err != nil && !errors.Is(err, context.Canceled) {
 		panic(err.Error())
 	}
 }
