@@ -11,6 +11,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE FUNCTION vec.vec2_of(x float8, y float8) RETURNS vec.vec2 AS $$
+BEGIN
+    RETURN ARRAY[x, y];
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE FUNCTION vec.vec2_up() RETURNS vec.vec2 AS $$
 BEGIN
     RETURN ARRAY[0.0, 1.0];

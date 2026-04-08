@@ -5,7 +5,7 @@ CREATE FUNCTION game.init(game_id UUID) RETURNS void AS $$
 BEGIN
     INSERT INTO game.players (game_id, position, velocity, direction, keysPressed, score) VALUES
         (game_id,
-         ARRAY[0.5, 0.5],
+         vec.vec2_of(0.5, 0.5),
          vec.vec2_zero(),
          vec.vec2_up(),
          ROW(false, false, false, false),
