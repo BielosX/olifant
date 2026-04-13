@@ -130,6 +130,7 @@ DECLARE
     tick_s float8;
     bounding_radius jsonb;
     player_bounding_radius float8;
+    enemy_bounding_radius float8;
     player game.players%ROWTYPE;
     keys game.keysState;
     v_velocity vec.vec2;
@@ -137,6 +138,7 @@ DECLARE
     v_position vec.vec2;
     enemy_position vec.vec2;
     enemy_velocity vec.vec2;
+    player_to_enemy_distance float8;
     player_speed float8 := 0.3;
     events CURSOR FOR SELECT * FROM game.input_events
                                WHERE game_id=v_game_id ORDER BY order_number ASC LIMIT 10 FOR UPDATE;
@@ -148,11 +150,16 @@ BEGIN
     FROM game.consts
     WHERE key='bounding_circle_radius';
     player_bounding_radius := (bounding_radius->>'player')::float8;
+    enemy_bounding_radius := (bounding_radius->>'enemy')::float8;
     SELECT * INTO player FROM game.players WHERE game_id=v_game_id;
     PERFORM game.new_enemy(player);
     FOR e in enemies LOOP
         enemy_velocity := e.velocity::vec.vec2;
         enemy_position := e.position::vec.vec2;
+        player_to_enemy_distance := vec.vec2_len(vec.vec2_sub(player.position, enemy_position));
+        IF player_to_enemy_distance < player_bounding_radius + enemy_bounding_radius THEN
+           RETURN true;
+        END IF;
         enemy_position := vec.vec2_add(vec.vec2_mul_scalar(enemy_velocity, tick_s), enemy_position);
         enemy_velocity := game.enemy_velocity(player, enemy_position);
         UPDATE game.enemies SET position=enemy_position, velocity=enemy_velocity WHERE CURRENT OF enemies;
