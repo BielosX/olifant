@@ -62,6 +62,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+CREATE FUNCTION vec.vec2_sub(fst vec.vec2, snd vec.vec2) RETURNS vec.vec2 AS $$
+BEGIN
+    RETURN ARRAY[fst[1] - snd[1], fst[2] - snd[2]];
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE FUNCTION vec.vec2_mul_scalar(vec vec.vec2, scalar float8) RETURNS vec.vec2 AS $$
 BEGIN
     RETURN ARRAY[scalar * vec[1], scalar * vec[2]];

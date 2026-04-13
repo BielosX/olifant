@@ -36,8 +36,21 @@ var BlueColor = color.RGBA{
 	B: 255,
 }
 
+var RedColor = color.RGBA{
+	A: 255,
+	R: 255,
+	G: 0,
+	B: 0,
+}
+
 type GameConsts struct {
 	PlayerBoundingCircleRadius float64
+	EnemyBoundingCircleRadius  float64
+}
+
+type Enemy struct {
+	Position r2.Vec
+	Velocity r2.Vec
 }
 
 type Player struct {
@@ -74,6 +87,7 @@ type Game struct {
 	inputs  chan []GameInputEvent
 	group   *errgroup.Group
 	player  *Player
+	enemies []Enemy
 	consts  GameConsts
 	sample  *ebiten.Image
 }
@@ -119,6 +133,7 @@ func NewGame(cfg *Config) (*Game, error) {
 		inputs,
 		group,
 		player,
+		[]Enemy{},
 		consts,
 		sample,
 	}, nil
@@ -174,6 +189,7 @@ func (g *Game) Start() error {
 	defer c.Release()
 	v, err := g.GetConst(BoundingCircleRadiusKey)
 	g.consts.PlayerBoundingCircleRadius = v.(map[string]any)["player"].(float64)
+	g.consts.EnemyBoundingCircleRadius = v.(map[string]any)["enemy"].(float64)
 	if err != nil {
 		g.cancel()
 		return err
@@ -274,6 +290,16 @@ func (g *Game) GetConst(key string) (any, error) {
 	return result, nil
 }
 
+func fromServerVec(vec []float64) r2.Vec {
+	if len(vec) != 2 {
+		panic("server vec len different than 2")
+	}
+	return r2.Vec{
+		X: vec[0],
+		Y: vec[1],
+	}
+}
+
 func (g *Game) GetPlayer() (*Player, error) {
 	c, err := g.pool.Acquire(g.context)
 	if err != nil {
@@ -289,24 +315,42 @@ func (g *Game) GetPlayer() (*Player, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !(len(position) == 2 && len(velocity) == 2 && len(direction) == 2) {
-		return nil, errors.New("position, velocity and direction should have len == 2")
-	}
 	return &Player{
-		Position: r2.Vec{
-			X: position[0],
-			Y: position[1],
-		},
-		Velocity: r2.Vec{
-			X: velocity[0],
-			Y: velocity[1],
-		},
-		Direction: r2.Vec{
-			X: direction[0],
-			Y: direction[1],
-		},
-		Score: score,
+		Position:  fromServerVec(position),
+		Velocity:  fromServerVec(velocity),
+		Direction: fromServerVec(direction),
+		Score:     score,
 	}, nil
+}
+
+func (g *Game) GetEnemies() ([]Enemy, error) {
+	c, err := g.pool.Acquire(g.context)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Release()
+	r, err := c.Query(g.context, "SELECT position, velocity FROM game.enemies WHERE game_id=$1", g.id.String())
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	var position []float64
+	var velocity []float64
+	var enemies []Enemy
+	for r.Next() {
+		err = r.Scan(&position, &velocity)
+		if err != nil {
+			return nil, err
+		}
+		enemies = append(enemies, Enemy{
+			Position: fromServerVec(position),
+			Velocity: fromServerVec(velocity),
+		})
+	}
+	if r.Err() != nil {
+		return nil, r.Err()
+	}
+	return enemies, nil
 }
 
 func (g *Game) Finish() error {
@@ -329,9 +373,18 @@ func (g *Game) Update() error {
 			return err
 		}
 		g.player = player
+		enemies, err := g.GetEnemies()
+		if err != nil {
+			return err
+		}
+		g.enemies = enemies
 	default:
 		position := r2.Add(g.player.Position, r2.Scale(1.0/60.0, g.player.Velocity))
 		g.player.Position = position
+		for i := range g.enemies {
+			position = r2.Add(g.enemies[i].Position, r2.Scale(1.0/60.0, g.enemies[i].Velocity))
+			g.enemies[i].Position = position
+		}
 	}
 	var events []GameInputEvent
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
@@ -364,15 +417,13 @@ func toVertex(vec r2.Vec, color color.Color) ebiten.Vertex {
 	}
 }
 
-func (g *Game) drawPlayer(screen *ebiten.Image) {
-	playerDir := g.player.Direction
-	dir := r2.Scale(g.consts.PlayerBoundingCircleRadius, playerDir)
-	pos := g.player.Position
+func (g *Game) drawEntity(screen *ebiten.Image, direction r2.Vec, pos r2.Vec, radius float64, color color.RGBA) {
+	dir := r2.Scale(radius, direction)
 	angle := 2 * math.Pi / 3
 	back := r2.Add(r2.Scale(-1.0, dir), pos)
 	rightDir := r2.Rotate(dir, angle, ZeroVec)
 	right := r2.Add(rightDir, pos)
-	leftDir := r2.Sub(r2.Scale(2.0*r2.Dot(rightDir, playerDir), playerDir), rightDir)
+	leftDir := r2.Sub(r2.Scale(2.0*r2.Dot(rightDir, direction), direction), rightDir)
 	left := r2.Add(leftDir, pos)
 	front := r2.Add(dir, pos)
 	op := &ebiten.DrawTrianglesOptions{}
@@ -383,13 +434,16 @@ func (g *Game) drawPlayer(screen *ebiten.Image) {
 		vertices[i] = toVertex(r2.Vec{
 			X: v.X * screenX,
 			Y: (1.0 - v.Y) * screenY,
-		}, BlueColor)
+		}, color)
 	}
 	screen.DrawTriangles(vertices[:], []uint16{0, 1, 2, 2, 1, 3}, g.sample, op)
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
-	g.drawPlayer(screen)
+	g.drawEntity(screen, g.player.Direction, g.player.Position, g.consts.PlayerBoundingCircleRadius, BlueColor)
+	for _, enemy := range g.enemies {
+		g.drawEntity(screen, r2.Unit(enemy.Velocity), enemy.Position, g.consts.EnemyBoundingCircleRadius, RedColor)
+	}
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
