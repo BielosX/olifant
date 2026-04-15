@@ -10,7 +10,8 @@ CREATE TYPE game.inputs AS ENUM (
     'LEFT_PRESSED',
     'LEFT_RELEASED',
     'RIGHT_PRESSED',
-    'RIGHT_RELEASED'
+    'RIGHT_RELEASED',
+    'FIRE'
 );
 
 CREATE TABLE game.input_events (
@@ -50,6 +51,7 @@ CREATE TABLE game.players (
     velocity vec.vec2,
     direction vec.vec2,
     keysPressed game.keysState,
+    lastFireEvent timestamp,
     score INTEGER
 );
 
@@ -58,7 +60,6 @@ CREATE TABLE game.enemies (
     game_id UUID REFERENCES game_loop.games (id) ON DELETE CASCADE,
     position vec.vec2,
     velocity vec.vec2,
-    hit_points INTEGER,
     created TIMESTAMP
 );
 

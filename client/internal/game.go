@@ -9,13 +9,16 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
+	"github.com/hajimehoshi/ebiten/v2/text"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/image/font/basicfont"
 	"golang.org/x/sync/errgroup"
 	"gonum.org/v1/gonum/spatial/r2"
 )
@@ -79,17 +82,18 @@ func NewPlayer() *Player {
 }
 
 type Game struct {
-	id      uuid.UUID
-	pool    *pgxpool.Pool
-	context context.Context
-	cancel  context.CancelFunc
-	events  chan bool
-	inputs  chan []GameInputEvent
-	group   *errgroup.Group
-	player  *Player
-	enemies []Enemy
-	consts  GameConsts
-	sample  *ebiten.Image
+	id       uuid.UUID
+	pool     *pgxpool.Pool
+	context  context.Context
+	cancel   context.CancelFunc
+	events   chan bool
+	inputs   chan []GameInputEvent
+	group    *errgroup.Group
+	player   *Player
+	enemies  []Enemy
+	consts   GameConsts
+	sample   *ebiten.Image
+	lastFire time.Time
 }
 
 func getPostgresUrl(cfg *Config, appName string) string {
@@ -124,6 +128,7 @@ func NewGame(cfg *Config) (*Game, error) {
 	consts := GameConsts{}
 	sample := ebiten.NewImage(1, 1)
 	sample.Fill(color.White)
+	lastFire := time.Time{}
 	return &Game{
 		id,
 		pool,
@@ -136,6 +141,7 @@ func NewGame(cfg *Config) (*Game, error) {
 		[]Enemy{},
 		consts,
 		sample,
+		lastFire,
 	}, nil
 }
 
@@ -213,6 +219,7 @@ const (
 	LeftReleased  GameInputEvent = "LEFT_RELEASED"
 	RightPressed  GameInputEvent = "RIGHT_PRESSED"
 	RightReleased GameInputEvent = "RIGHT_RELEASED"
+	Fire          GameInputEvent = "FIRE"
 )
 
 type GameInput int32
@@ -222,12 +229,13 @@ const (
 	DownInput
 	LeftInput
 	RightInput
+	FireInput
 )
 
 type gameInputProps struct {
 	Key           ebiten.Key
 	PressedEvent  GameInputEvent
-	ReleasedEvent GameInputEvent
+	ReleasedEvent *GameInputEvent
 }
 
 var gameInputMapping map[GameInput]gameInputProps
@@ -237,22 +245,27 @@ func init() {
 	gameInputMapping[UpInput] = gameInputProps{
 		Key:           ebiten.KeyW,
 		PressedEvent:  UpPressed,
-		ReleasedEvent: UpReleased,
+		ReleasedEvent: new(UpReleased),
 	}
 	gameInputMapping[DownInput] = gameInputProps{
 		Key:           ebiten.KeyS,
 		PressedEvent:  DownPressed,
-		ReleasedEvent: DownReleased,
+		ReleasedEvent: new(DownReleased),
 	}
 	gameInputMapping[LeftInput] = gameInputProps{
 		Key:           ebiten.KeyA,
 		PressedEvent:  LeftPressed,
-		ReleasedEvent: LeftReleased,
+		ReleasedEvent: new(LeftReleased),
 	}
 	gameInputMapping[RightInput] = gameInputProps{
 		Key:           ebiten.KeyD,
 		PressedEvent:  RightPressed,
-		ReleasedEvent: RightReleased,
+		ReleasedEvent: new(RightReleased),
+	}
+	gameInputMapping[FireInput] = gameInputProps{
+		Key:           ebiten.KeySpace,
+		PressedEvent:  Fire,
+		ReleasedEvent: nil,
 	}
 }
 
@@ -391,12 +404,19 @@ func (g *Game) Update() error {
 		g.cancel()
 		return GameFinished
 	}
-	for _, v := range gameInputMapping {
+	for k, v := range gameInputMapping {
 		if inpututil.IsKeyJustPressed(v.Key) {
-			events = append(events, v.PressedEvent)
+			if k == FireInput {
+				if g.lastFire.Add(time.Millisecond * 500).Before(time.Now()) {
+					events = append(events, v.PressedEvent)
+					g.lastFire = time.Now()
+				}
+			} else {
+				events = append(events, v.PressedEvent)
+			}
 		}
-		if inpututil.IsKeyJustReleased(v.Key) {
-			events = append(events, v.ReleasedEvent)
+		if inpututil.IsKeyJustReleased(v.Key) && v.ReleasedEvent != nil {
+			events = append(events, *v.ReleasedEvent)
 
 		}
 	}
@@ -444,6 +464,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	for _, enemy := range g.enemies {
 		g.drawEntity(screen, r2.Unit(enemy.Velocity), enemy.Position, g.consts.EnemyBoundingCircleRadius, RedColor)
 	}
+	text.Draw(screen, fmt.Sprintf("Score: %v", g.player.Score), basicfont.Face7x13, 20, 20, color.White)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
