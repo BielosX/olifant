@@ -143,6 +143,8 @@ DECLARE
     p_dir vec.vec2;
     p_pos vec.vec2;
     e_pos vec.vec2;
+    radius float8;
+    hit_handicap float8;
     t_a float8;
     t_b float8;
     t_c float8;
@@ -150,12 +152,14 @@ DECLARE
     t_1 float8;
     t_2 float8;
 BEGIN
+    SELECT COALESCE(current_setting('game.enemy_hit_handicap', true)::float8, 1.0) INTO hit_handicap;
+    radius := e_radius * hit_handicap;
     p_pos := player.position::vec.vec2;
     p_dir := player.direction::vec.vec2;
     e_pos := enemy.position::vec.vec2;
     t_a := p_dir[1] ^ 2 + p_dir[2] ^ 2;
     t_b := 2.0 * (p_dir[1] * (p_pos[1] - e_pos[1]) + p_dir[2] * (p_pos[2] - e_pos[2]));
-    t_c := (p_pos[1] - e_pos[1]) ^ 2 + (p_pos[2] - e_pos[2]) ^ 2 - e_radius ^ 2;
+    t_c := (p_pos[1] - e_pos[1]) ^ 2 + (p_pos[2] - e_pos[2]) ^ 2 - radius ^ 2;
     t_delta := t_b ^ 2 - 4.0 * t_a * t_c;
     IF t_delta > 0 THEN
        t_1 := (-1.0 * t_b - sqrt(t_delta)) / 2.0 * t_a;
