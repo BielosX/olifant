@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"image/color"
 	"math"
-	"os"
 	"strconv"
 	"time"
 
+	"github.com/golang/freetype/truetype"
 	"github.com/google/uuid"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -18,7 +18,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/gofont/goregular"
 	"golang.org/x/sync/errgroup"
 	"gonum.org/v1/gonum/spatial/r2"
 )
@@ -26,6 +27,17 @@ import (
 const BoundingCircleRadiusKey = "bounding_circle_radius"
 
 var GameFinished = errors.New("GameFinished")
+
+type GameState int8
+
+var scoreFace font.Face
+var infoFace font.Face
+
+const (
+	Init GameState = iota
+	Running
+	GameOver
+)
 
 var ZeroVec = r2.Vec{
 	X: 0.0,
@@ -94,6 +106,7 @@ type Game struct {
 	consts   GameConsts
 	sample   *ebiten.Image
 	lastFire time.Time
+	state    GameState
 }
 
 func getPostgresUrl(cfg *Config, appName string) string {
@@ -142,6 +155,7 @@ func NewGame(cfg *Config) (*Game, error) {
 		consts,
 		sample,
 		lastFire,
+		Init,
 	}, nil
 }
 
@@ -267,6 +281,16 @@ func init() {
 		PressedEvent:  Fire,
 		ReleasedEvent: nil,
 	}
+	f, err := truetype.Parse(goregular.TTF)
+	if err != nil {
+		panic(err.Error())
+	}
+	scoreFace = truetype.NewFace(f, &truetype.Options{
+		Size: 14,
+	})
+	infoFace = truetype.NewFace(f, &truetype.Options{
+		Size: 72,
+	})
 }
 
 func (g *Game) SendInputEvents(events []GameInputEvent) error {
@@ -379,8 +403,10 @@ func (g *Game) Update() error {
 		return nil
 	case isFinished := <-g.events:
 		if isFinished {
-			os.Exit(0)
+			g.state = GameOver
+			return nil
 		}
+		g.state = Running
 		player, err := g.GetPlayer()
 		if err != nil {
 			return err
@@ -399,28 +425,30 @@ func (g *Game) Update() error {
 			g.enemies[i].Position = position
 		}
 	}
-	var events []GameInputEvent
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
 		g.cancel()
 		return GameFinished
 	}
-	for k, v := range gameInputMapping {
-		if inpututil.IsKeyJustPressed(v.Key) {
-			if k == FireInput {
-				if g.lastFire.Add(time.Millisecond * 500).Before(time.Now()) {
+	if g.state == Running {
+		var events []GameInputEvent
+		for k, v := range gameInputMapping {
+			if inpututil.IsKeyJustPressed(v.Key) {
+				if k == FireInput {
+					if g.lastFire.Add(time.Millisecond * 500).Before(time.Now()) {
+						events = append(events, v.PressedEvent)
+						g.lastFire = time.Now()
+					}
+				} else {
 					events = append(events, v.PressedEvent)
-					g.lastFire = time.Now()
 				}
-			} else {
-				events = append(events, v.PressedEvent)
+			}
+			if inpututil.IsKeyJustReleased(v.Key) && v.ReleasedEvent != nil {
+				events = append(events, *v.ReleasedEvent)
+
 			}
 		}
-		if inpututil.IsKeyJustReleased(v.Key) && v.ReleasedEvent != nil {
-			events = append(events, *v.ReleasedEvent)
-
-		}
+		g.inputs <- events
 	}
-	g.inputs <- events
 	return nil
 }
 
@@ -459,12 +487,22 @@ func (g *Game) drawEntity(screen *ebiten.Image, direction r2.Vec, pos r2.Vec, ra
 	screen.DrawTriangles(vertices[:], []uint16{0, 1, 2, 2, 1, 3}, g.sample, op)
 }
 
+const InitText = "Wait..."
+const GameOverText = "Game Over"
+
 func (g *Game) Draw(screen *ebiten.Image) {
-	g.drawEntity(screen, g.player.Direction, g.player.Position, g.consts.PlayerBoundingCircleRadius, BlueColor)
-	for _, enemy := range g.enemies {
-		g.drawEntity(screen, r2.Unit(enemy.Velocity), enemy.Position, g.consts.EnemyBoundingCircleRadius, RedColor)
+	switch g.state {
+	case Init:
+		text.Draw(screen, InitText, infoFace, 20, screen.Bounds().Dy()>>2, color.White)
+	case Running:
+		g.drawEntity(screen, g.player.Direction, g.player.Position, g.consts.PlayerBoundingCircleRadius, BlueColor)
+		for _, enemy := range g.enemies {
+			g.drawEntity(screen, r2.Unit(enemy.Velocity), enemy.Position, g.consts.EnemyBoundingCircleRadius, RedColor)
+		}
+		text.Draw(screen, fmt.Sprintf("Score: %v", g.player.Score), scoreFace, 20, 20, color.White)
+	case GameOver:
+		text.Draw(screen, GameOverText, infoFace, 20, screen.Bounds().Dy()>>2, color.White)
 	}
-	text.Draw(screen, fmt.Sprintf("Score: %v", g.player.Score), basicfont.Face7x13, 20, 20, color.White)
 }
 
 func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeight int) {
